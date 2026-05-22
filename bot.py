@@ -41,33 +41,26 @@ def analyze(df):
     return df.iloc[-1]
 
 def get_signal(row):
-    # TEST MODE — সহজ condition
-    if row["rsi"] < 45:
-        return "BUY 🟢 (TEST)"
-    elif row["rsi"] > 55:
-        return "SELL 🔴 (TEST)"
+    if row["rsi"] < 35 and row["macd"] > 0 and row["ema20"] > row["ema50"]:
+        return "BUY 🟢"
+    elif row["rsi"] > 65 and row["macd"] < 0 and row["ema20"] < row["ema50"]:
+        return "SELL 🔴"
     return None
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
-# Test message পাঠাও
-send_telegram("🤖 <b>Crypto Bot চালু হয়েছে!</b>\nসব coin scan করা হচ্ছে...")
-
 print("Fetching all USD pairs from Kraken...")
 all_pairs = get_all_usd_pairs()
 print(f"Total pairs found: {len(all_pairs)}")
 
-# শুধু প্রথম ১০টা coin test করো
-test_pairs = all_pairs[:10]
 signals_found = 0
 
-for coin in test_pairs:
+for coin in all_pairs:
     try:
         df = get_data(coin)
         if df is None:
-            print(f"Skip {coin}: not enough data")
             continue
         row = analyze(df)
         signal = get_signal(row)
@@ -76,8 +69,7 @@ for coin in test_pairs:
                    f"Signal: {signal}\n"
                    f"💰 Price: ${row['close']:.6f}\n"
                    f"📊 RSI: {row['rsi']:.1f}\n"
-                   f"📈 EMA20: ${row['ema20']:.6f}\n"
-                   f"🧪 <i>TEST MODE</i>")
+                   f"📈 EMA20: ${row['ema20']:.6f}")
             send_telegram(msg)
             print(f"Signal sent: {coin} - {signal}")
             signals_found += 1
@@ -87,6 +79,4 @@ for coin in test_pairs:
     except Exception as e:
         print(f"Error {coin}: {e}")
 
-# শেষে summary পাঠাও
-send_telegram(f"✅ <b>Test Complete!</b>\nTotal signals: {signals_found}/10 coins")
-print(f"Bot run complete. Signals: {signals_found}")
+print(f"Bot run complete. Signals found: {signals_found}")
