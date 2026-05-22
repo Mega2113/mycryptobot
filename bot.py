@@ -3,10 +3,25 @@ import requests
 import pandas as pd
 import ta
 import time
+import json
 import numpy as np
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
+
+# Active trades track করার জন্য
+TRADES_FILE = "active_trades.json"
+
+def load_trades():
+    try:
+        with open(TRADES_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_trades(trades):
+    with open(TRADES_FILE, "w") as f:
+        json.dump(trades, f)
 
 def get_all_pairs():
     url = "https://data-api.binance.vision/api/v3/exchangeInfo"
@@ -17,6 +32,12 @@ def get_all_pairs():
         if s["symbol"].endswith("USDT") and s["status"] == "TRADING"
     ]
     return usdt_pairs
+
+def get_current_price(symbol):
+    url = "https://data-api.binance.vision/api/v3/ticker/price"
+    params = {"symbol": symbol}
+    r = requests.get(url, params=params, timeout=10)
+    return float(r.json()["price"])
 
 def get_data(symbol, interval="4h"):
     url = "https://data-api.binance.vision/api/v3/klines"
@@ -35,8 +56,8 @@ def get_data(symbol, interval="4h"):
 
 def calculate_fibonacci(df):
     recent = df.tail(100)
-    high = recent["high"].max() if "high" in recent.columns else recent["close"].max()
-    low = recent["low"].min() if "low" in recent.columns else recent["close"].min()
+    high = recent["close"].max()
+    low = recent["close"].min()
     diff = high - low
     levels = {
         "0.0":   high,
@@ -73,7 +94,6 @@ def analyze(df):
     df["atr"] = ta.volatility.AverageTrueRange(
         df["close"], df["close"], df["close"]
     ).average_true_range()
-    # Stochastic RSI
     stoch_rsi = ta.momentum.StochRSIIndicator(df["close"])
     df["stoch_k"] = stoch_rsi.stochrsi_k()
     df["stoch_d"] = stoch_rsi.stochrsi_d()
@@ -102,38 +122,31 @@ def get_signal(df):
     stoch_d = last["stoch_d"]
     trend = get_market_trend(df)
     high_volume = check_volume(df)
-
-    # Fibonacci
     fib_levels, fib_high, fib_low = calculate_fibonacci(df)
     fib_zone, fib_label = get_fib_zone(price, fib_levels)
-
-    # Support/Resistance
     recent = df.tail(50)
     support = recent["close"].min()
     resistance = recent["close"].max()
 
-    # BUY conditions
     buy_conditions = [
-        rsi < 35,                          # RSI oversold
-        macd > 0,                          # MACD positive
-        ema20 > ema50,                     # Uptrend
-        trend == "BULL",                   # Bull market
-        price <= bb_low * 1.02,            # Near BB low
-        high_volume,                       # High volume
-        stoch_k < 0.2 and stoch_d < 0.2,  # Stoch RSI oversold
-        fib_zone in ["BUY", "STRONG_BUY"], # Fib buy zone
+        rsi < 35,
+        macd > 0,
+        ema20 > ema50,
+        trend == "BULL",
+        price <= bb_low * 1.02,
+        high_volume,
+        stoch_k < 0.2 and stoch_d < 0.2,
+        fib_zone in ["BUY", "STRONG_BUY"],
     ]
-
-    # SELL conditions
     sell_conditions = [
-        rsi > 65,                            # RSI overbought
-        macd < 0,                            # MACD negative
-        ema20 < ema50,                       # Downtrend
-        trend == "BEAR",                     # Bear market
-        price >= bb_high * 0.98,             # Near BB high
-        high_volume,                         # High volume
-        stoch_k > 0.8 and stoch_d > 0.8,    # Stoch RSI overbought
-        fib_zone in ["SELL", "STRONG_SELL"], # Fib sell zone
+        rsi > 65,
+        macd < 0,
+        ema20 < ema50,
+        trend == "BEAR",
+        price >= bb_high * 0.98,
+        high_volume,
+        stoch_k > 0.8 and stoch_d > 0.8,
+        fib_zone in ["SELL", "STRONG_SELL"],
     ]
 
     buy_score = sum(buy_conditions)
@@ -143,7 +156,6 @@ def get_signal(df):
         return "BUY", buy_score, support, resistance, fib_levels, fib_label
     elif sell_score >= 6:
         return "SELL", sell_score, support, resistance, fib_levels, fib_label
-
     return None, 0, support, resistance, fib_levels, fib_label
 
 def check_1h(symbol):
@@ -155,6 +167,101 @@ def check_1h(symbol):
     buy_1h = last["rsi"] < 40 and last["macd"] > 0 and last["stoch_k"] < 0.3
     sell_1h = last["rsi"] > 60 and last["macd"] < 0 and last["stoch_k"] > 0.7
     return buy_1h, sell_1h
+
+def check_sl_tp(trades):
+    closed = []
+    for coin, trade in trades.items():
+        try:
+            current = get_current_price(coin)
+            entry = trade["entry"]
+            sl = trade["sl"]
+            tp1 = trade["tp1"]
+            tp2 = trade["tp2"]
+            tp3 = trade["tp3"]
+            signal = trade["signal"]
+            pct = ((current - entry) / entry) * 100
+
+            if signal == "BUY":
+                if current <= sl:
+                    msg = (
+                        f"🚨 <b>STOP LOSS HIT — {coin}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📉 Entry : ${entry:.6f}\n"
+                        f"📉 Current : ${current:.6f}\n"
+                        f"💸 Loss : {pct:.2f}%\n"
+                        f"❌ SL Hit : ${sl:.6f}\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ Trade বন্ধ করুন!"
+                    )
+                    send_telegram(msg)
+                    closed.append(coin)
+                elif current >= tp3:
+                    msg = (
+                        f"🎉 <b>TP3 HIT — {coin}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📈 Entry : ${entry:.6f}\n"
+                        f"📈 Current : ${current:.6f}\n"
+                        f"💰 Profit : +{pct:.2f}%\n"
+                        f"✅ TP3 Hit : ${tp3:.6f}\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"🎯 সব profit নিন!"
+                    )
+                    send_telegram(msg)
+                    closed.append(coin)
+                elif current >= tp2:
+                    msg = (
+                        f"✅ <b>TP2 HIT — {coin}</b>\n"
+                        f"💰 Profit : +{pct:.2f}%\n"
+                        f"📈 Current : ${current:.6f}\n"
+                        f"🎯 TP2 : ${tp2:.6f}\n"
+                        f"⚠️ কিছু profit নিন, SL move করুন!"
+                    )
+                    send_telegram(msg)
+                elif current >= tp1:
+                    msg = (
+                        f"✅ <b>TP1 HIT — {coin}</b>\n"
+                        f"💰 Profit : +{pct:.2f}%\n"
+                        f"📈 Current : ${current:.6f}\n"
+                        f"🎯 TP1 : ${tp1:.6f}\n"
+                        f"⚠️ কিছু profit নিন!"
+                    )
+                    send_telegram(msg)
+
+            else:  # SELL
+                if current >= sl:
+                    msg = (
+                        f"🚨 <b>STOP LOSS HIT — {coin}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📈 Entry : ${entry:.6f}\n"
+                        f"📈 Current : ${current:.6f}\n"
+                        f"💸 Loss : +{abs(pct):.2f}%\n"
+                        f"❌ SL Hit : ${sl:.6f}\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"⚠️ Trade বন্ধ করুন!"
+                    )
+                    send_telegram(msg)
+                    closed.append(coin)
+                elif current <= tp3:
+                    msg = (
+                        f"🎉 <b>TP3 HIT — {coin}</b>\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"📉 Entry : ${entry:.6f}\n"
+                        f"📉 Current : ${current:.6f}\n"
+                        f"💰 Profit : +{abs(pct):.2f}%\n"
+                        f"✅ TP3 Hit!\n"
+                        f"━━━━━━━━━━━━━━━━\n"
+                        f"🎯 সব profit নিন!"
+                    )
+                    send_telegram(msg)
+                    closed.append(coin)
+
+            time.sleep(0.2)
+        except Exception as e:
+            print(f"SL/TP check error {coin}: {e}")
+
+    for coin in closed:
+        del trades[coin]
+    return trades
 
 def format_price(price):
     if price < 0.0001:
@@ -177,16 +284,13 @@ def build_message(coin, signal, last, score, support, resistance, fib_levels, fi
         tp2 = price + (atr * 3.0)
         tp3 = price + (atr * 5.0)
         sl  = price - (atr * 1.5)
-        zone_label = "📥 <b>Buy Zone</b>"
-        emoji = "🟢"
-
         msg = (
             f"🟢 <b>BUY SIGNAL — {coin}</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"💪 Strength : {strength} ({score}/8)\n"
             f"💰 Price : {format_price(price)}\n"
             f"\n"
-            f"{zone_label}\n"
+            f"📥 <b>Buy Zone</b>\n"
             f"   Low  : {format_price(price * 0.998)}\n"
             f"   High : {format_price(price * 1.002)}\n"
             f"\n"
@@ -198,7 +302,7 @@ def build_message(coin, signal, last, score, support, resistance, fib_levels, fi
             f"🛑 <b>Stop Loss</b> : {format_price(sl)}\n"
             f"\n"
             f"📊 RSI : {last['rsi']:.1f}\n"
-            f"📊 Stoch RSI : {stoch:.2f} (oversold)\n"
+            f"📊 Stoch RSI : {stoch:.2f}\n"
             f"📐 Fib Level : {fib_label}\n"
             f"📈 Support : {format_price(support)}\n"
             f"📉 Resistance : {format_price(resistance)}\n"
@@ -210,7 +314,6 @@ def build_message(coin, signal, last, score, support, resistance, fib_levels, fi
         tp2 = price - (atr * 3.0)
         tp3 = price - (atr * 5.0)
         sl  = price + (atr * 1.5)
-
         msg = (
             f"🔴 <b>SELL SIGNAL — {coin}</b>\n"
             f"━━━━━━━━━━━━━━━━\n"
@@ -229,20 +332,30 @@ def build_message(coin, signal, last, score, support, resistance, fib_levels, fi
             f"🛑 <b>Stop Loss</b> : {format_price(sl)}\n"
             f"\n"
             f"📊 RSI : {last['rsi']:.1f}\n"
-            f"📊 Stoch RSI : {stoch:.2f} (overbought)\n"
+            f"📊 Stoch RSI : {stoch:.2f}\n"
             f"📐 Fib Level : {fib_label}\n"
             f"📈 Support : {format_price(support)}\n"
             f"📉 Resistance : {format_price(resistance)}\n"
             f"━━━━━━━━━━━━━━━━\n"
             f"⚠️ নিজে বিশ্লেষণ করে trade করুন"
         )
-
-    return msg
+    return msg, tp1, tp2, tp3, sl
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
+# Active trades check করো
+print("Checking active trades SL/TP...")
+trades = load_trades()
+if trades:
+    trades = check_sl_tp(trades)
+    save_trades(trades)
+    print(f"Active trades: {len(trades)}")
+else:
+    print("No active trades")
+
+# নতুন signal খোঁজো
 print("Fetching all USDT pairs from Binance Vision...")
 all_pairs = get_all_pairs()
 print(f"Total pairs: {len(all_pairs)}")
@@ -267,10 +380,23 @@ for coin in all_pairs:
                 continue
 
             last = df.iloc[-1]
-            msg = build_message(coin, signal, last, score, support, resistance, fib_levels, fib_label)
+            msg, tp1, tp2, tp3, sl = build_message(
+                coin, signal, last, score, support, resistance, fib_levels, fib_label
+            )
             send_telegram(msg)
             print(f"Signal: {coin} - {signal} ({score}/8)")
             signals_found += 1
+
+            # Trade save করো SL/TP track এর জন্য
+            trades[coin] = {
+                "signal": signal,
+                "entry": last["close"],
+                "sl": sl,
+                "tp1": tp1,
+                "tp2": tp2,
+                "tp3": tp3
+            }
+            save_trades(trades)
             time.sleep(1)
         else:
             print(f"No signal: {coin} | RSI: {df.iloc[-1]['rsi']:.1f}")
