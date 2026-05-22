@@ -4,7 +4,7 @@ import ccxt
 import pandas as pd
 import ta
 
-TELEGRAM_TOKEN = os.environ["8737265369:AAEcle7UDX-gRkQ7k6Ml5p2KBAsqApAj0Xg"]
+TELEGRAM_TOKEN = os.environ["8737265369:AAEBpgMTprgYCzmRmHQ5ChVoRe-REAghG38"]
 CHAT_ID = os.environ["-1003935365851"]
 
 def get_data(symbol, timeframe="1h"):
