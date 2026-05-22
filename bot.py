@@ -7,22 +7,23 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
 COINS = [
-    "BTC/USDT", "ETH/USDT", "SOL/USDT",
-    "BNB/USDT", "XRP/USDT", "DOGE/USDT",
-    "ADA/USDT", "MATIC/USDT", "DOT/USDT",
-    "AVAX/USDT", "LINK/USDT", "UNI/USDT"
+    "BTCUSDT", "ETHUSDT", "SOLUSDT",
+    "BNBUSDT", "XRPUSDT", "DOGEUSDT",
+    "ADAUSDT", "MATICUSDT", "DOTUSDT",
+    "AVAXUSDT", "LINKUSDT", "UNIUSDT"
 ]
 
 def get_data(symbol):
     url = "https://api.bybit.com/v5/market/kline"
     params = {
         "category": "spot",
-        "symbol": symbol.replace("/", ""),
+        "symbol": symbol,
         "interval": "60",
-        "limit": 100
+        "limit": "100"
     }
-    r = requests.get(url, params=params)
-    data = r.json()["result"]["list"]
+    r = requests.get(url, params=params, timeout=10)
+    result = r.json()
+    data = result["result"]["list"]
     df = pd.DataFrame(data, columns=["time","open","high","low","close","volume","turnover"])
     df = df[["time","open","high","low","close","volume"]].astype(float)
     df = df.iloc[::-1].reset_index(drop=True)
