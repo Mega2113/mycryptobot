@@ -19,7 +19,7 @@ def get_all_usd_pairs():
 
 def get_data(symbol):
     url = "https://api.kraken.com/0/public/OHLC"
-    params = {"pair": symbol, "interval": 60}
+    params = {"pair": symbol, "interval": 240}
     r = requests.get(url, params=params, timeout=10)
     result = r.json().get("result", {})
     if not result:
