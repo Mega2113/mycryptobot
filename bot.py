@@ -7,26 +7,22 @@ import time
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-COINS = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "BNB": "binancecoin",
-    "XRP": "ripple",
-    "DOGE": "dogecoin",
-    "ADA": "cardano",
-    "AVAX": "avalanche-2",
-    "LINK": "chainlink",
-    "DOT": "polkadot"
-}
+COINS = [
+    "XBTUSD", "ETHUSD", "SOLUSD", "XRPUSD",
+    "DOGEUSD", "ADAUSD", "AVAXUSD", "LINKUSD",
+    "DOTUSD", "MATICUSD", "UNIUSD", "ATOMUSD",
+    "LTCUSD", "TRXUSD", "NEARUSD"
+]
 
-def get_data(coin_id):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
-    params = {"vs_currency": "usd", "days": "1"}
+def get_data(symbol):
+    url = "https://api.kraken.com/0/public/OHLC"
+    params = {"pair": symbol, "interval": 60}
     r = requests.get(url, params=params, timeout=10)
-    data = r.json()
-    df = pd.DataFrame(data, columns=["time","open","high","low","close"])
-    df = df.astype(float)
+    result = r.json()["result"]
+    key = list(result.keys())[0]
+    data = result[key]
+    df = pd.DataFrame(data, columns=["time","open","high","low","close","vwap","volume","count"])
+    df = df[["time","open","high","low","close","volume"]].astype(float)
     return df
 
 def analyze(df):
@@ -48,23 +44,24 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
-for symbol, coin_id in COINS.items():
+for coin in COINS:
     try:
-        df = get_data(coin_id)
+        df = get_data(coin)
         row = analyze(df)
         signal = get_signal(row)
+        display = coin.replace("USD", "/USDT").replace("XBT", "BTC")
         if signal:
-            msg = (f"⚡ <b>{symbol}/USDT</b>\n"
+            msg = (f"⚡ <b>{display}</b>\n"
                    f"Signal: {signal}\n"
                    f"💰 Price: ${row['close']:.4f}\n"
                    f"📊 RSI: {row['rsi']:.1f}\n"
                    f"📈 EMA20: ${row['ema20']:.4f}")
             send_telegram(msg)
-            print(f"Signal sent: {symbol} - {signal}")
+            print(f"Signal sent: {display} - {signal}")
         else:
-            print(f"No signal: {symbol} | RSI: {row['rsi']:.1f}")
-        time.sleep(2)
+            print(f"No signal: {display} | RSI: {row['rsi']:.1f}")
+        time.sleep(1)
     except Exception as e:
-        print(f"Error {symbol}: {e}")
+        print(f"Error {coin}: {e}")
 
 print("Bot run complete.")
