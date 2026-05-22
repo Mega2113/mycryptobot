@@ -7,53 +7,27 @@ import time
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-COINS = [
-    # Layer 1
-    "XBTUSD", "ETHUSD", "SOLUSD", "XRPUSD",
-    "ADAUSD", "AVAXUSD", "DOTUSD", "NEARUSD",
-    "ATOMUSD", "ICPUSD", "ALGOUSD", "XLMUSD",
-    "VETUSD", "FILUSD", "HBARUSD", "XTZUSD",
-    "MINAUSD", "FLOWUSD", "KAVAUSD", "KSMUSD",
-    "STXUSD", "SUIUSD", "APTUSD",
-
-    # Layer 2
-    "ARBUSD", "OPUSD", "POLUSD", "LRCUSD",
-
-    # DeFi
-    "UNIUSD", "AAVEUSD", "MKRUSD", "COMPUSD",
-    "SNXUSD", "CRVUSD", "YFIUSD", "BALUSD",
-    "ZRXUSD", "OCEANUSD", "GMXUSD", "DYDXUSD",
-    "LDOUSD", "RPLUSD",
-
-    # Meme
-    "DOGEUSD", "PEPEUSD", "WIFUSD", "BONKUSD",
-
-    # Gaming/NFT
-    "AXSUUD", "MANAUSD", "SANDUSD", "GALAUSD",
-    "CHZUSD", "ENJUSD",
-
-    # AI
-    "FETUSD", "AGIXUSD", "RENDERUSD", "TAOUSD",
-
-    # Others
-    "LINKUSD", "TRXUSD", "LTCUSD", "BNBUSD",
-    "DOGEUSD", "INJUSD", "APEUSD", "GMTUSD",
-    "BATUSD", "ANKRUSD", "STORJUSD", "QNTUSD",
-    "XMRUSD", "ZECUSD", "DASHUSD", "BCHUSD",
-    "ETCUSD", "EOSUSD", "WLDUSD", "TIAUSD",
-    "PYTHUSD", "JUPUSD", "ENAUSD", "DYMUSD",
-    "BLURUSD", "ARUSD", "NMRUSD", "GNOUSD",
-    "OXTUSD", "RENUSD", "KNCUSD", "OMGUSD",
-    "SCUSD", "POWRUSD", "RLCUSD", "MLNUSD",
-]
+def get_all_usd_pairs():
+    url = "https://api.kraken.com/0/public/AssetPairs"
+    r = requests.get(url, timeout=10)
+    pairs = r.json()["result"]
+    usd_pairs = [
+        pair for pair in pairs.keys()
+        if pair.endswith("USD") and ".d" not in pair
+    ]
+    return usd_pairs
 
 def get_data(symbol):
     url = "https://api.kraken.com/0/public/OHLC"
     params = {"pair": symbol, "interval": 60}
     r = requests.get(url, params=params, timeout=10)
-    result = r.json()["result"]
+    result = r.json().get("result", {})
+    if not result:
+        return None
     key = list(result.keys())[0]
     data = result[key]
+    if len(data) < 60:
+        return None
     df = pd.DataFrame(data, columns=["time","open","high","low","close","vwap","volume","count"])
     df = df[["time","open","high","low","close","volume"]].astype(float)
     return df
@@ -77,24 +51,33 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
-for coin in COINS:
+# সব USD pair আনো
+print("Fetching all USD pairs from Kraken...")
+all_pairs = get_all_usd_pairs()
+print(f"Total pairs found: {len(all_pairs)}")
+
+signals_found = 0
+
+for coin in all_pairs:
     try:
         df = get_data(coin)
+        if df is None:
+            continue
         row = analyze(df)
         signal = get_signal(row)
-        display = coin.replace("USD", "/USDT").replace("XBT", "BTC")
         if signal:
-            msg = (f"⚡ <b>{display}</b>\n"
+            msg = (f"⚡ <b>{coin}</b>\n"
                    f"Signal: {signal}\n"
-                   f"💰 Price: ${row['close']:.4f}\n"
+                   f"💰 Price: ${row['close']:.6f}\n"
                    f"📊 RSI: {row['rsi']:.1f}\n"
-                   f"📈 EMA20: ${row['ema20']:.4f}")
+                   f"📈 EMA20: ${row['ema20']:.6f}")
             send_telegram(msg)
-            print(f"Signal sent: {display} - {signal}")
+            print(f"Signal sent: {coin} - {signal}")
+            signals_found += 1
         else:
-            print(f"No signal: {display} | RSI: {row['rsi']:.1f}")
-        time.sleep(1)
+            print(f"No signal: {coin} | RSI: {row['rsi']:.1f}")
+        time.sleep(0.5)
     except Exception as e:
         print(f"Error {coin}: {e}")
 
-print("Bot run complete.")
+print(f"Bot run complete. Signals found: {signals_found}")
