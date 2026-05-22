@@ -1,16 +1,25 @@
 import os
 import requests
-import ccxt
 import pandas as pd
 import ta
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["CHAT_ID"]
 
-def get_data(symbol, timeframe="1h"):
-    exchange = ccxt.binance()
-    ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=100)
-    df = pd.DataFrame(ohlcv, columns=["time","open","high","low","close","volume"])
+COINS = {
+    "BTC/USDT": "bitcoin",
+    "ETH/USDT": "ethereum",
+    "SOL/USDT": "solana",
+    "BNB/USDT": "binancecoin",
+    "XRP/USDT": "ripple"
+}
+
+def get_data(coin_id):
+    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
+    params = {"vs_currency": "usd", "days": "1"}
+    r = requests.get(url, params=params)
+    data = r.json()
+    df = pd.DataFrame(data, columns=["time","open","high","low","close"])
     return df
 
 def analyze(df):
@@ -32,24 +41,22 @@ def send_telegram(msg):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     requests.post(url, data={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"})
 
-coins = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT", "XRP/USDT"]
-
-for coin in coins:
+for symbol, coin_id in COINS.items():
     try:
-        df = get_data(coin)
+        df = get_data(coin_id)
         row = analyze(df)
         signal = get_signal(row)
         if signal:
-            msg = (f"⚡ <b>{coin}</b>\n"
+            msg = (f"⚡ <b>{symbol}</b>\n"
                    f"Signal: {signal}\n"
                    f"💰 Price: ${row['close']:.4f}\n"
                    f"📊 RSI: {row['rsi']:.1f}\n"
                    f"📈 EMA20: ${row['ema20']:.4f}")
             send_telegram(msg)
-            print(f"Signal sent: {coin} - {signal}")
+            print(f"Signal sent: {symbol} - {signal}")
         else:
-            print(f"No signal: {coin} | RSI: {row['rsi']:.1f}")
+            print(f"No signal: {symbol} | RSI: {row['rsi']:.1f}")
     except Exception as e:
-        print(f"Error {coin}: {e}")
+        print(f"Error {symbol}: {e}")
 
 print("Bot run complete.")
